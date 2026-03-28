@@ -1,0 +1,108 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            archive: zip
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            archive: tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
+
+      - name: Install web dependencies
+        working-directory: web
+        run: vp install
+
+      - name: Generate web assets
+        working-directory: web
+        env:
+          NUXT_PUBLIC_APP_VERSION: ${{ github.ref_name }}
+        run: vp run generate
+
+      - name: Prepare embedded web assets
+        shell: bash
+        run: |
+          rm -rf cmd/studio/web/dist
+          mkdir -p cmd/studio/web/dist
+          cp -R web/.output/public/. cmd/studio/web/dist/
+
+      - name: Build binaries
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p release/bin
+          studio_name="confdiff-studio"
+          cli_name="confdiff"
+          if [ "${GOOS}" = "windows" ]; then
+            studio_name="${studio_name}.exe"
+            cli_name="${cli_name}.exe"
+          fi
+          go build -trimpath -ldflags="-s -w" -o "release/bin/${studio_name}" ./cmd/studio
+          go build -trimpath -ldflags="-s -w" -o "release/bin/${cli_name}" ./cmd/confdiff
+
+      - name: Package archive
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          package_dir="ConfdiffStudio_${version}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p "release/${package_dir}"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "release/${package_dir}/"
+          cp -R licenses "release/${package_dir}/licenses"
+          cp release/bin/* "release/${package_dir}/"
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            archive_name="${package_dir}.zip"
+            7z a "release/${archive_name}" "./release/${package_dir}/*"
+          else
+            archive_name="${package_dir}.tar.gz"
+            tar -C release -czf "release/${archive_name}" "${package_dir}"
+          fi
+
+          echo "ARCHIVE_PATH=release/${archive_name}" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME=${archive_name}" >> "$GITHUB_ENV"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ARCHIVE_PATH }}

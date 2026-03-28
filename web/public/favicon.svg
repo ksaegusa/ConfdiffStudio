@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ConfdiffStudio">
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="#635bff" />
+  <path
+    fill="#ffffff"
+    d="M40 51a3 3 0 0 0-3-3h-2v-6h12a6 6 0 0 0 6-6V14a6 6 0 0 0-6-6H17a6 6 0 0 0-6 6v22a6 6 0 0 0 6 6h12v6h-2a3 3 0 0 0-3 3H3v6h21a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3h21v-6Zm-23-15V14h30v22Zm3-17.33 10.67 10.67L20 39h7.6l8.77-8.77a2.67 2.67 0 0 0 0-3.8L27.5 18.67ZM44 34h-8v5.67H44Z"
+  />
+</svg>

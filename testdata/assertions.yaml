@@ -1,0 +1,16 @@
+version: 1
+defaults:
+  match_mode: regex
+rules:
+  - id: expected-open-443
+    type: diff_require_added
+    severity: medium
+    pattern: 'permit\\s+tcp\\s+10\\.10\\.0\\.0/16\\s+172\\.16\\.10\\.20\\s+eq\\s+443'
+  - id: keep-deny
+    type: diff_forbid_removed
+    severity: high
+    pattern: "^access-list OUTSIDE_IN deny"
+  - id: forbid-any-any
+    type: line_absent
+    severity: high
+    pattern: 'permit\\s+ip\\s+any\\s+any'

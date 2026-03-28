@@ -1,0 +1,41 @@
+# Nuxt dev/build outputs
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+out
+web/.output
+web/.nuxt
+web/.data
+web/.nitro
+
+# Node dependencies
+node_modules
+web/node_modules
+
+# Logs
+logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.DS_Store
+.fleet
+.idea
+
+# Local env files
+.env
+.env.*
+!.env.example
+.vscode
+
+# Embedded static assets (generated)
+cmd/studio/web/dist
+
+# Local licenses and keys
+/license/
+/.local/license/
