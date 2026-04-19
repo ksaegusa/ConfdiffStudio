@@ -1,7 +1,7 @@
 GO ?= $(or $(shell command -v go 2>/dev/null),/home/node/.local/go/bin/go)
 VP ?= vp
 ADDR ?= 127.0.0.1:8080
-APP_VERSION ?= dev
+APP_VERSION ?= v.0.1.0
 
 ROOT_DIR := $(CURDIR)
 WEB_DIR := $(ROOT_DIR)/web

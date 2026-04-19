@@ -5,21 +5,17 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"mime"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/ksaegusa/ConfdiffStudio/internal/assertions"
 	"github.com/ksaegusa/ConfdiffStudio/internal/check"
-	"github.com/ksaegusa/ConfdiffStudio/internal/license"
 	"github.com/ksaegusa/ConfdiffStudio/internal/model"
 	"github.com/ksaegusa/ConfdiffStudio/internal/report"
 	"github.com/ksaegusa/ConfdiffStudio/internal/structureddiff"
@@ -43,13 +39,6 @@ rules:
     severity: medium
     pattern: '(?i)0\.0\.0\.0/0'
 `
-
-const maxLicenseEnvelopeBytes = 64 * 1024
-
-type Options struct {
-	LicenseFile   string
-	PublicKeyFile string
-}
 
 type checkRequest struct {
 	Pairs         []pairInput  `json:"pairs"`
@@ -88,11 +77,7 @@ type checkResponse struct {
 	Stderr         string                     `json:"stderr"`
 }
 
-type applyLicenseRequest struct {
-	LicenseEnvelope string `json:"licenseEnvelope"`
-}
-
-func NewHandler(staticFS embed.FS, opts Options) (http.Handler, error) {
+func NewHandler(staticFS embed.FS) (http.Handler, error) {
 	webFS, err := fs.Sub(staticFS, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("open embedded web assets: %w", err)
@@ -104,21 +89,7 @@ func NewHandler(staticFS embed.FS, opts Options) (http.Handler, error) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		handleCheck(w, r, opts)
-	})
-	mux.HandleFunc("/api/license/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		handleLicenseStatus(w, opts)
-	})
-	mux.HandleFunc("/api/license/apply", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		handleLicenseApply(w, r, opts)
+		handleCheck(w, r)
 	})
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -132,7 +103,7 @@ func NewHandler(staticFS embed.FS, opts Options) (http.Handler, error) {
 	return withAccessLog(mux), nil
 }
 
-func handleCheck(w http.ResponseWriter, r *http.Request, opts Options) {
+func handleCheck(w http.ResponseWriter, r *http.Request) {
 	var req checkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
@@ -140,31 +111,6 @@ func handleCheck(w http.ResponseWriter, r *http.Request, opts Options) {
 	}
 	if len(req.Pairs) == 0 {
 		writeError(w, http.StatusBadRequest, "pairs are required")
-		return
-	}
-
-	status := resolveLicenseStatus(opts)
-	policy := license.PolicyForStatus(status)
-	violation := license.ValidateCheckInput(policy, license.CheckInput{
-		Profile: license.CheckProfile{
-			OrderMode:      req.Profile.OrderMode,
-			IgnorePatterns: req.Profile.IgnorePatterns,
-			ReplaceRules:   len(req.Profile.ReplaceRules),
-			TargetPrefixes: len(req.Profile.TargetPrefixes),
-		},
-		Pairs: pairLimits(req.Pairs),
-	})
-	if violation != nil {
-		writeErrorWithDetails(
-			w,
-			http.StatusForbidden,
-			violation.Message,
-			violation.Code,
-			mergeMaps(
-				violation.Details,
-				map[string]any{"current_tier": policy.Tier},
-			),
-		)
 		return
 	}
 
@@ -228,156 +174,11 @@ func handleCheck(w http.ResponseWriter, r *http.Request, opts Options) {
 		resp.Markdown = report.RenderMarkdown(result)
 	}
 	if req.WantReport {
-		if !license.HasFeature(policy, license.FeatureReportExport) {
-			writeErrorWithDetails(
-				w,
-				http.StatusForbidden,
-				"report export is available in pro tier only",
-				"LICENSE_FEATURE_BLOCKED",
-				map[string]any{
-					"feature":       license.FeatureReportExport,
-					"required_tier": "pro",
-					"current_tier":  policy.Tier,
-				},
-			)
-			return
-		}
 		diffReport := report.BuildDiffReport(structured, result, diffProfile, time.Now().UTC())
 		resp.DiffReport = &diffReport
 	}
 
 	writeJSON(w, http.StatusOK, resp)
-}
-
-func handleLicenseStatus(w http.ResponseWriter, opts Options) {
-	status := resolveLicenseStatus(opts)
-	writeJSON(w, http.StatusOK, status)
-}
-
-func handleLicenseApply(w http.ResponseWriter, r *http.Request, opts Options) {
-	var req applyLicenseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
-		return
-	}
-	if strings.TrimSpace(req.LicenseEnvelope) == "" {
-		writeError(w, http.StatusBadRequest, "licenseEnvelope is required")
-		return
-	}
-
-	if _, applyErr := validateLicenseEnvelopeBeforeSave(req.LicenseEnvelope, opts, time.Now().UTC()); applyErr != nil {
-		writeErrorWithDetails(w, applyErr.status, applyErr.message, applyErr.code, applyErr.details)
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(opts.LicenseFile), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	tmpFile, err := os.CreateTemp(filepath.Dir(opts.LicenseFile), "license-save-*.tmp")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := tmpFile.Write([]byte(req.LicenseEnvelope)); err != nil {
-		tmpFile.Close()
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := tmpFile.Close(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := os.Rename(tmpPath, opts.LicenseFile); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-type licenseApplyError struct {
-	status  int
-	code    string
-	message string
-	details map[string]any
-}
-
-func validateLicenseEnvelopeBeforeSave(
-	envelope string,
-	opts Options,
-	now time.Time,
-) (license.Status, *licenseApplyError) {
-	if len([]byte(envelope)) > maxLicenseEnvelopeBytes {
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusBadRequest,
-			code:    "LICENSE_ENVELOPE_TOO_LARGE",
-			message: "licenseEnvelope exceeds size limit",
-			details: map[string]any{"limit": maxLicenseEnvelopeBytes},
-		}
-	}
-	if !fileExists(opts.PublicKeyFile) {
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusInternalServerError,
-			code:    "LICENSE_PUBLIC_KEY_MISSING",
-			message: "public key file is not configured",
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(opts.LicenseFile), 0o755); err != nil {
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusInternalServerError,
-			code:    "LICENSE_STORAGE_ERROR",
-			message: err.Error(),
-		}
-	}
-
-	tmpFile, err := os.CreateTemp(filepath.Dir(opts.LicenseFile), "license-validate-*.json")
-	if err != nil {
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusInternalServerError,
-			code:    "LICENSE_STORAGE_ERROR",
-			message: err.Error(),
-		}
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := tmpFile.Write([]byte(envelope)); err != nil {
-		tmpFile.Close()
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusInternalServerError,
-			code:    "LICENSE_STORAGE_ERROR",
-			message: err.Error(),
-		}
-	}
-	if err := tmpFile.Close(); err != nil {
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusInternalServerError,
-			code:    "LICENSE_STORAGE_ERROR",
-			message: err.Error(),
-		}
-	}
-
-	status, err := license.Verify(tmpPath, opts.PublicKeyFile, now)
-	if err != nil || !status.Valid {
-		reason := status.Error
-		if strings.TrimSpace(reason) == "" && err != nil {
-			reason = err.Error()
-		}
-		if strings.TrimSpace(reason) == "" {
-			reason = "license verification failed"
-		}
-		return license.Status{}, &licenseApplyError{
-			status:  http.StatusBadRequest,
-			code:    "LICENSE_ENVELOPE_INVALID",
-			message: "licenseEnvelope is not valid",
-			details: map[string]any{"reason": reason},
-		}
-	}
-
-	return status, nil
 }
 
 func splitConfigLines(text string) []string {
@@ -489,14 +290,6 @@ func writeErrorWithDetails(w http.ResponseWriter, status int, message, code stri
 	writeJSON(w, status, payload)
 }
 
-func fileExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	_, err := os.Stat(path)
-	return err == nil || !errors.Is(err, os.ErrNotExist)
-}
-
 type loggingResponseWriter struct {
 	http.ResponseWriter
 	status int
@@ -544,43 +337,4 @@ func withAccessLog(next http.Handler) http.Handler {
 		}
 		log.Print(base)
 	})
-}
-
-func resolveLicenseStatus(opts Options) license.Status {
-	if !fileExists(opts.LicenseFile) || !fileExists(opts.PublicKeyFile) {
-		return license.ApplyPolicy(license.Status{
-			Valid:     false,
-			Plan:      "free",
-			Error:     "license or public key not configured",
-			IsExpired: false,
-		})
-	}
-
-	status, err := license.Verify(opts.LicenseFile, opts.PublicKeyFile, time.Now().UTC())
-	if err != nil {
-		return license.ApplyPolicy(status)
-	}
-	return license.ApplyPolicy(status)
-}
-
-func pairLimits(pairs []pairInput) []license.CheckPair {
-	limits := make([]license.CheckPair, 0, len(pairs))
-	for _, p := range pairs {
-		limits = append(limits, license.CheckPair{
-			BeforeBytes: len([]byte(p.Before)),
-			AfterBytes:  len([]byte(p.After)),
-		})
-	}
-	return limits
-}
-
-func mergeMaps(base map[string]any, extra map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range extra {
-		out[k] = v
-	}
-	return out
 }

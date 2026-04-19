@@ -24,7 +24,6 @@ const checkLoading = ref(false);
 const reportLoading = ref(false);
 const errorMessage = ref("");
 const result = ref<any>(null);
-const licenseStatus = ref<any>(null);
 const reportModalOpen = ref(false);
 const reportError = ref("");
 
@@ -93,8 +92,8 @@ interface TreeLine {
 interface TreeSection {
   key: string;
   title: string;
-  blockCount: number;
-  rows: TreeLine[];
+  leftRows: TreeLine[];
+  rightRows: TreeLine[];
 }
 
 interface PairSnapshot {
@@ -257,44 +256,6 @@ const readyToRun = computed(
     wb.pairs.value.length > 0 &&
     wb.pairs.value.every((p) => p.before.trim().length > 0 && p.after.trim().length > 0),
 );
-
-const currentTier = computed(() => {
-  const tier = String(licenseStatus.value?.tier ?? "").toLowerCase();
-  return tier === "pro" ? "pro" : "free";
-});
-
-const currentLimits = computed(
-  () =>
-    licenseStatus.value?.limits ?? {
-      max_pairs: 3,
-      max_ignore_patterns: 5,
-      max_replace_rules: 0,
-      max_target_prefixes: 0,
-      max_bytes_per_side: 200 * 1024,
-    },
-);
-
-const canUseStrict = computed(() => currentTier.value === "pro");
-const canUseReplaceRules = computed(() => currentTier.value === "pro");
-const canUseTargetPrefixes = computed(() => currentTier.value === "pro");
-const canUseReportExport = computed(() => currentTier.value === "pro");
-
-async function fetchLicenseStatus() {
-  try {
-    licenseStatus.value = await $fetch("/api/license/status");
-  } catch {
-    licenseStatus.value = {
-      tier: "free",
-      limits: {
-        max_pairs: 3,
-        max_ignore_patterns: 5,
-        max_replace_rules: 0,
-        max_target_prefixes: 0,
-        max_bytes_per_side: 200 * 1024,
-      },
-    };
-  }
-}
 
 function contextLabel(path: string[]) {
   if (!path || path.length === 0) {
@@ -563,16 +524,6 @@ function pushUniqueTreeLine(lines: TreeLine[], next: TreeLine) {
   lines.push(next);
 }
 
-function pushTreeChange(lines: TreeLine[], depth: number, beforeText: string, afterText: string) {
-  const subject = commonLinePrefix(beforeText, afterText);
-  const leftValue = subject ? beforeText.slice(subject.length).trim() : beforeText;
-  const rightValue = subject ? afterText.slice(subject.length).trim() : afterText;
-  const text = subject
-    ? `${subject} ${leftValue} -> ${rightValue}`.trim()
-    : `${beforeText} -> ${afterText}`;
-  pushUniqueTreeLine(lines, { tone: "add", depth, text });
-}
-
 function activeFilterLabels() {
   const labels = [];
   if (showChangedOnly.value) {
@@ -761,17 +712,6 @@ function noMatchReason() {
   return t("check.noMatchReason");
 }
 
-interface TreeLine {
-  tone: "context" | "add" | "remove";
-  depth: number;
-  text: string;
-}
-
-interface TreeBlock {
-  left: TreeLine[];
-  right: TreeLine[];
-}
-
 function treeSections(index: number, file: any): TreeSection[] {
   const blocks = (file as StructuredDiffFile | undefined)?.blocks ?? [];
   if (blocks.length === 0) {
@@ -788,8 +728,8 @@ function treeSections(index: number, file: any): TreeSection[] {
     const next: TreeSection = {
       key,
       title: key,
-      blockCount: 0,
-      rows: [],
+      leftRows: [],
+      rightRows: [],
     };
     sections.set(key, next);
     return next;
@@ -805,7 +745,7 @@ function treeSections(index: number, file: any): TreeSection[] {
       for (const line of changedLines(block, "after")) {
         afterChanged.add(`${line.depth}:${line.text}`);
       }
-      ensureSection(treeSectionKey(block)).blockCount += 1;
+      ensureSection(treeSectionKey(block));
     }
 
     let currentLeftSection = "";
@@ -826,28 +766,15 @@ function treeSections(index: number, file: any): TreeSection[] {
       }
       const section = ensureSection(sectionKey);
 
-      if (row.left && row.right) {
-        if (row.left.depth === row.right.depth && row.left.text === row.right.text) {
-          pushUniqueTreeLine(section.rows, {
-            tone: "context",
-            depth: row.left.depth,
-            text: row.left.text,
-          });
-        } else {
-          pushTreeChange(section.rows, row.right.depth, row.left.text, row.right.text);
-        }
-        continue;
-      }
-
       if (row.left) {
-        pushUniqueTreeLine(section.rows, {
+        pushUniqueTreeLine(section.leftRows, {
           tone: beforeChanged.has(`${row.left.depth}:${row.left.text}`) ? "remove" : "context",
           depth: row.left.depth,
           text: row.left.text,
         });
       }
       if (row.right) {
-        pushUniqueTreeLine(section.rows, {
+        pushUniqueTreeLine(section.rightRows, {
           tone: afterChanged.has(`${row.right.depth}:${row.right.text}`) ? "add" : "context",
           depth: row.right.depth,
           text: row.right.text,
@@ -858,38 +785,28 @@ function treeSections(index: number, file: any): TreeSection[] {
     for (const block of blocks) {
       const key = treeSectionKey(block);
       const section = ensureSection(key);
-      section.blockCount += 1;
 
       for (const line of ancestorPreview(block)) {
-        pushUniqueTreeLine(section.rows, { tone: "context", depth: line.depth, text: line.text });
+        const previewLine = { tone: "context" as const, depth: line.depth, text: line.text };
+        pushUniqueTreeLine(section.leftRows, previewLine);
+        pushUniqueTreeLine(section.rightRows, previewLine);
       }
 
       const beforeLines = changedLines(block, "before");
       const afterLines = changedLines(block, "after");
-      const length = Math.max(beforeLines.length, afterLines.length);
-
-      for (let i = 0; i < length; i++) {
-        const beforeLine = beforeLines[i] ?? null;
-        const afterLine = afterLines[i] ?? null;
-
-        if (beforeLine && afterLine) {
-          pushTreeChange(section.rows, afterLine.depth, beforeLine.text, afterLine.text);
-          continue;
-        }
-        if (beforeLine) {
-          pushUniqueTreeLine(section.rows, {
-            tone: "remove",
-            depth: beforeLine.depth,
-            text: beforeLine.text,
-          });
-        }
-        if (afterLine) {
-          pushUniqueTreeLine(section.rows, {
-            tone: "add",
-            depth: afterLine.depth,
-            text: afterLine.text,
-          });
-        }
+      for (const beforeLine of beforeLines) {
+        pushUniqueTreeLine(section.leftRows, {
+          tone: "remove",
+          depth: beforeLine.depth,
+          text: beforeLine.text,
+        });
+      }
+      for (const afterLine of afterLines) {
+        pushUniqueTreeLine(section.rightRows, {
+          tone: "add",
+          depth: afterLine.depth,
+          text: afterLine.text,
+        });
       }
     }
   }
@@ -906,39 +823,7 @@ function treeLabel(depth: number) {
 
 function formatCheckError(error: any) {
   const payload = error?.data ?? error?.response?._data ?? {};
-  const code = String(payload?.code ?? "");
-  const details = payload?.details ?? {};
   const statusMessage = payload?.statusMessage ?? error?.statusMessage ?? "";
-
-  if (code === "LICENSE_LIMIT_EXCEEDED") {
-    if (details?.field === "pairs") {
-      return t("check.limitPairs", { limit: details.limit, actual: details.actual });
-    }
-    if (details?.field === "ignorePatterns") {
-      return t("check.limitIgnore", { limit: details.limit, actual: details.actual });
-    }
-    if (details?.field === "replaceRules") {
-      return t("check.limitReplace", { limit: details.limit, actual: details.actual });
-    }
-    if (details?.field === "targetPrefixes") {
-      return t("check.limitTarget", { limit: details.limit, actual: details.actual });
-    }
-    if (details?.field === "pair_size_bytes") {
-      return t("check.limitSize", { limit: details.max_bytes_per_side });
-    }
-  }
-
-  if (code === "LICENSE_FEATURE_BLOCKED") {
-    const feature = details?.feature ?? "この機能";
-    if (feature === "report_export") {
-      return t("check.reportBlocked");
-    }
-    return t("check.featureBlocked", { feature });
-  }
-
-  if (error?.status === 403 || error?.statusCode === 403) {
-    return statusMessage || t("check.planBlocked");
-  }
 
   return statusMessage || error?.message || t("check.checkFailed");
 }
@@ -958,11 +843,6 @@ function requestPairsFromResult() {
 
 async function openReport() {
   if (!result.value) {
-    return;
-  }
-  if (!canUseReportExport.value) {
-    reportError.value = t("check.reportBlocked");
-    reportModalOpen.value = true;
     return;
   }
   if (currentReport.value) {
@@ -1083,8 +963,6 @@ async function runCheck() {
     checkLoading.value = false;
   }
 }
-
-await fetchLicenseStatus();
 </script>
 
 <template>
@@ -1096,16 +974,12 @@ await fetchLicenseStatus();
   <details id="diff-profile" class="profile-box">
     <summary>{{ t("check.profileTitle") }}</summary>
     <p class="profile-intro">{{ t("check.profileIntro") }}</p>
-    <p v-if="currentTier !== 'pro'" class="profile-note">
-      <Icon icon="mdi:lock-outline" />
-      {{ t("check.profilePro") }}
-    </p>
     <div class="profile-grid">
       <label>
         <span><Icon icon="mdi:swap-horizontal" />{{ t("check.orderMode") }}</span>
         <select v-model="orderMode">
           <option value="lenient">{{ t("check.lenient") }}</option>
-          <option value="strict" :disabled="!canUseStrict">{{ t("check.strict") }}</option>
+          <option value="strict">{{ t("check.strict") }}</option>
         </select>
         <small>{{ t("check.orderModeHint") }}</small>
       </label>
@@ -1117,9 +991,6 @@ await fetchLicenseStatus();
           placeholder="^ntp clock-period\n^! Last configuration"
         />
         <small>{{ t("check.ignoreHint") }}</small>
-        <small class="limit-note">{{
-          t("check.limit", { count: currentLimits.max_ignore_patterns })
-        }}</small>
       </label>
       <label>
         <span><Icon icon="mdi:find-replace" />{{ t("check.normalizeValues") }}</span>
@@ -1133,53 +1004,31 @@ await fetchLicenseStatus();
             :key="`replace-rule-${index}`"
             class="replace-rule-row"
           >
-            <input
-              v-model="rule.pattern"
-              :disabled="!canUseReplaceRules"
-              :placeholder="t('check.replaceMatchPlaceholder')"
-            />
+            <input v-model="rule.pattern" :placeholder="t('check.replaceMatchPlaceholder')" />
             <span class="replace-rule-arrow">→</span>
             <input
               v-model="rule.replacement"
-              :disabled="!canUseReplaceRules"
               :placeholder="t('check.replaceReplacementPlaceholder')"
             />
             <button
               v-if="replaceRuleRows.length > 1"
               type="button"
               class="wb-btn flat tiny icon-only"
-              :disabled="!canUseReplaceRules"
               @click="removeReplaceRuleRow(index)"
             >
               <Icon icon="mdi:close" />
             </button>
           </div>
         </div>
-        <button
-          type="button"
-          class="wb-btn flat tiny add-replace-rule"
-          :disabled="!canUseReplaceRules"
-          @click="addReplaceRuleRow"
-        >
+        <button type="button" class="wb-btn flat tiny add-replace-rule" @click="addReplaceRuleRow">
           <Icon icon="mdi:plus" />{{ t("check.addRule") }}
         </button>
         <small>{{ t("check.replaceHint") }}</small>
-        <small v-if="canUseReplaceRules" class="limit-note">{{
-          t("check.limit", { count: currentLimits.max_replace_rules })
-        }}</small>
       </label>
       <label>
         <span><Icon icon="mdi:target" />{{ t("check.targetBlocks") }}</span>
-        <textarea
-          v-model="targetText"
-          rows="4"
-          :disabled="!canUseTargetPrefixes"
-          placeholder="interface\nip access-list"
-        />
+        <textarea v-model="targetText" rows="4" placeholder="interface\nip access-list" />
         <small>{{ t("check.targetHint") }}</small>
-        <small v-if="canUseTargetPrefixes" class="limit-note">{{
-          t("check.limit", { count: currentLimits.max_target_prefixes })
-        }}</small>
       </label>
     </div>
   </details>
@@ -1219,31 +1068,10 @@ await fetchLicenseStatus();
         {{ t("check.uniqueNote") }}
       </p>
       <div class="result-actions">
-        <button
-          class="wb-btn tiny"
-          @click="openReport"
-          :disabled="reportLoading || !result || !canUseReportExport"
-        >
-          <Icon
-            :icon="
-              reportLoading
-                ? 'mdi:loading'
-                : canUseReportExport
-                  ? 'mdi:file-document-outline'
-                  : 'mdi:lock-outline'
-            "
-          />
-          {{
-            reportLoading
-              ? t("check.generating")
-              : canUseReportExport
-                ? t("check.generateReport")
-                : t("check.generateReportPro")
-          }}
+        <button class="wb-btn tiny" @click="openReport" :disabled="reportLoading || !result">
+          <Icon :icon="reportLoading ? 'mdi:loading' : 'mdi:file-document-outline'" />
+          {{ reportLoading ? t("check.generating") : t("check.generateReport") }}
         </button>
-        <span v-if="!canUseReportExport" class="summary-help">
-          <Icon icon="mdi:lock-outline" />{{ t("check.reportPro") }}
-        </span>
       </div>
     </div>
 
@@ -1522,14 +1350,32 @@ await fetchLicenseStatus();
                       <strong>{{ section.title }}</strong>
                     </summary>
                     <div class="tree-section-body">
-                      <div class="tree-stack">
-                        <div
-                          v-for="(line, lineIndex) in section.rows"
-                          :key="`${section.key}-${lineIndex}`"
-                          :class="['tree-item', `tree-item-${line.tone}`]"
-                        >
-                          <code class="tree-label">{{ treeLabel(line.depth) }}</code>
-                          <code class="tree-text">{{ line.text }}</code>
+                      <div class="tree-section-grid">
+                        <div class="tree-panel">
+                          <div class="tree-panel-head">Before</div>
+                          <div class="tree-stack">
+                            <div
+                              v-for="(line, lineIndex) in section.leftRows"
+                              :key="`${section.key}-left-${lineIndex}`"
+                              :class="['tree-item', `tree-item-${line.tone}`]"
+                            >
+                              <code class="tree-label">{{ treeLabel(line.depth) }}</code>
+                              <code class="tree-text">{{ line.text }}</code>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="tree-panel">
+                          <div class="tree-panel-head">After</div>
+                          <div class="tree-stack">
+                            <div
+                              v-for="(line, lineIndex) in section.rightRows"
+                              :key="`${section.key}-right-${lineIndex}`"
+                              :class="['tree-item', `tree-item-${line.tone}`]"
+                            >
+                              <code class="tree-label">{{ treeLabel(line.depth) }}</code>
+                              <code class="tree-text">{{ line.text }}</code>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1636,20 +1482,6 @@ label > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.profile-note,
-.limit-note {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.profile-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: var(--space-2) 0 0;
-  color: #6d28d9;
 }
 
 select,
@@ -2215,14 +2047,37 @@ input:not([type="checkbox"]) {
 }
 
 .tree-section-body {
-  padding: 8px 10px;
+  padding: 10px;
   border-top: 1px solid var(--border);
+}
+
+.tree-section-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.tree-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.tree-panel-head {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: #f8fafc;
 }
 
 .tree-stack {
   display: grid;
   gap: 2px;
-  padding: 4px 0;
+  padding: 8px 10px;
 }
 
 .tree-item {
@@ -2251,17 +2106,15 @@ input:not([type="checkbox"]) {
   color: #15803d;
 }
 
-.tree-item-add .tree-text::before {
-  content: "~ ";
-}
-
 .tree-item-remove .tree-label,
 .tree-item-remove .tree-text {
   color: #b91c1c;
 }
 
-.tree-item-remove .tree-text::before {
-  content: "- ";
+@media (max-width: 900px) {
+  .tree-section-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .error-text {

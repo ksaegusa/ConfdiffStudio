@@ -10,7 +10,6 @@ import (
 	"github.com/ksaegusa/ConfdiffStudio/internal/assertions"
 	"github.com/ksaegusa/ConfdiffStudio/internal/bootstrap"
 	"github.com/ksaegusa/ConfdiffStudio/internal/check"
-	"github.com/ksaegusa/ConfdiffStudio/internal/license"
 	"github.com/ksaegusa/ConfdiffStudio/internal/model"
 	"github.com/ksaegusa/ConfdiffStudio/internal/pair"
 	"github.com/ksaegusa/ConfdiffStudio/internal/report"
@@ -195,31 +194,7 @@ func run() int {
 	validateCmd.Flags().BoolVar(&validateJSON, "json", false, "Print validation result as JSON")
 	_ = validateCmd.MarkFlagRequired("assertions")
 
-	var licenseFile string
-	var publicKeyFile string
-	licenseStatusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Validate license and print status",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			status, err := license.Verify(licenseFile, publicKeyFile, time.Now().UTC())
-			if writeErr := writeJSON(os.Stdout, status); writeErr != nil {
-				return writeErr
-			}
-			if err != nil || !status.Valid {
-				return &exitCodeError{code: 1, err: fmt.Errorf("license is not valid")}
-			}
-			return nil
-		},
-	}
-	licenseStatusCmd.Flags().StringVar(&licenseFile, "license-file", "", "Signed license file path")
-	licenseStatusCmd.Flags().StringVar(&publicKeyFile, "public-key-file", "", "Base64 encoded ed25519 public key file path")
-	_ = licenseStatusCmd.MarkFlagRequired("license-file")
-	_ = licenseStatusCmd.MarkFlagRequired("public-key-file")
-
-	licenseCmd := &cobra.Command{Use: "license", Short: "License operations"}
-	licenseCmd.AddCommand(licenseStatusCmd)
-
-	root.AddCommand(checkCmd, bootstrapCmd, validateCmd, licenseCmd)
+	root.AddCommand(checkCmd, bootstrapCmd, validateCmd)
 
 	if err := root.Execute(); err != nil {
 		var codeErr *exitCodeError
