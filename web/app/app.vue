@@ -2,7 +2,6 @@
 import { Icon } from "@iconify/vue";
 import { useLocale } from "../composables/useLocale";
 
-const licenseTier = ref<"free" | "pro">("free");
 const { locale, t, setLocale } = useLocale();
 const runtimeConfig = useRuntimeConfig();
 const appVersion = computed(() => String(runtimeConfig.public.appVersion || "dev"));
@@ -12,17 +11,6 @@ useHead({
   htmlAttrs: computed(() => ({ lang: locale.value })),
   link: [{ rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
 });
-
-async function fetchTier() {
-  try {
-    const status = await $fetch<any>("/api/license/status");
-    licenseTier.value = String(status?.tier ?? "").toLowerCase() === "pro" ? "pro" : "free";
-  } catch {
-    licenseTier.value = "free";
-  }
-}
-
-await fetchTier();
 </script>
 
 <template>
@@ -34,14 +22,11 @@ await fetchTier();
         </div>
         <div>
           <h1 class="brand-title">ConfdiffStudio</h1>
-          <p class="brand-sub">v{{ appVersion }}</p>
+          <p class="brand-sub">{{ appVersion }}</p>
         </div>
       </div>
       <nav class="tabs">
         <NuxtLink to="/check"><Icon icon="mdi:file-compare" />{{ t("app.diffCheck") }}</NuxtLink>
-        <NuxtLink to="/license"
-          ><Icon icon="mdi:key-chain-variant" />{{ t("app.license") }}</NuxtLink
-        >
         <label class="lang-switch">
           <Icon icon="mdi:translate" />
           <span>{{ t("app.language") }}</span>
@@ -53,10 +38,6 @@ await fetchTier();
             <option value="en">{{ t("app.english") }}</option>
           </select>
         </label>
-        <span class="tier-nav" :class="licenseTier === 'pro' ? 'is-pro' : 'is-free'">
-          <Icon :icon="licenseTier === 'pro' ? 'mdi:shield-star-outline' : 'mdi:shield-outline'" />
-          {{ licenseTier.toUpperCase() }}
-        </span>
       </nav>
     </header>
     <main class="content">
@@ -209,28 +190,6 @@ body,
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
-}
-
-.tier-nav {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.tier-nav.is-pro {
-  color: #3730a3;
-  background: #eef2ff;
-  border-color: #c7d2fe;
-}
-
-.tier-nav.is-free {
-  color: #374151;
-  background: #f3f4f6;
 }
 
 .content {

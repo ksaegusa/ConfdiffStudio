@@ -1,7 +1,7 @@
 # confdiff CLI
 
 `confdiff` は、ConfdiffStudio に同梱される CLI です。  
-ローカルの before / after コンフィグと assertion YAML を使って、差分チェック、structured diff、ライセンス状態確認を行います。
+ローカルの before / after コンフィグと assertion YAML を使って、差分チェックと structured diff を行います。
 
 ## check
 
@@ -74,15 +74,3 @@ assertion YAML の構文と schema を検証します。
 confdiff validate --assertions ./testdata/assertions.yaml
 confdiff validate --assertions ./testdata/assertions.yaml --json
 ```
-
-## license status
-
-signed license envelope と公開鍵を検証し、現在状態を JSON で出力します。
-
-```bash
-confdiff license status \
-  --license-file ./.local/license/license.json \
-  --public-key-file ./.local/license/public.key
-```
-
-無効な場合は exit code `1`、CLI 引数などの実行エラーは `2` を返します。

@@ -14,14 +14,9 @@ var webAssets embed.FS
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
-	licenseFile := flag.String("license-file", "./.local/license/license.json", "license file path")
-	publicKeyFile := flag.String("public-key-file", "./.local/license/public.key", "public key file path")
 	flag.Parse()
 
-	handler, err := studio.NewHandler(webAssets, studio.Options{
-		LicenseFile:   *licenseFile,
-		PublicKeyFile: *publicKeyFile,
-	})
+	handler, err := studio.NewHandler(webAssets)
 	if err != nil {
 		log.Fatalf("init handler: %v", err)
 	}

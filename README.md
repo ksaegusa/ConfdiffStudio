@@ -54,7 +54,7 @@ Git が履歴管理やレビュー基盤を担うのに対して、ConfdiffStudi
 
 ## レポート
 
-Pro では、差分結果から報告用レポートを生成できます。
+差分結果から報告用レポートを生成できます。
 
 - 結論ファーストの Summary
 - 確認対象と検証方法
@@ -68,27 +68,7 @@ Pro では、差分結果から報告用レポートを生成できます。
 
 ## ライセンス
 
-ソースコードは [MIT License](LICENSE) で公開します。  
-製品としての Free / Pro 区分は、ソースコードライセンスとは別です。
-
-- Free
-  基本の差分比較と複数比較
-- Pro
-  strict 比較、置換ルール、ターゲット絞り込み、報告用レポート
-
-プランごとの上限はライセンス画面で確認できます。  
-ただし、実際に快適に扱える比較件数やファイルサイズはホストの CPU / メモリ / SSD に依存します。
-
-`cmd/studio` のローカル既定パスは以下です。
-
-- `./.local/license/license.json`
-- `./.local/license/public.key`
-
-公開鍵とライセンスファイルは、任意の安全な場所に配置できます。  
-上記はローカル開発向けの既定値で、公開 repo 直下に置く前提ではありません。  
-別の場所を使う場合は `-license-file` と `-public-key-file` で指定できます。
-
-適用時は、署名不正・破損・期限切れの license envelope は保存されません。
+ソースコードは [MIT License](LICENSE) で公開します。
 
 ## 開発
 
@@ -133,5 +113,4 @@ make check-web
 
 - Runtime/API: `docs/studio-runtime.md`
 - CLI (`confdiff`): `docs/confdiff-cli.md`
-- License operations: `docs/license-operations.md`
 - Third-party notices: `THIRD_PARTY_NOTICES.md`
